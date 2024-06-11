@@ -81,13 +81,29 @@ def pad_image(image):
         new_image.paste(image, (pad_w, 0))
         return new_image
 
+def create_mask_with_bbox(original_mask, bbox):
+    """
+    Создает новую маску на основании исходной маски и bounding box.
 
+    Returns:
+    - PIL.Image: Новая маска с выделенной областью bounding box.
+    """
+    new_mask_np = np.zeros((1024, 1024))
+    new_mask_np[bbox[1]:bbox[3], bbox[0]:bbox[2]] = original_mask
+    
+    return Image.fromarray(new_mask_np)
+
+from rembg import remove
 @spaces.GPU
 def predict(
     input_image,
     input_mask,
     prompt,
     negative_prompt,
+    min_x,
+    min_y,
+    max_x,
+    max_y,
     seed,
     guidance_scale=8.5,
     controlnet_conditioning_scale=0.5,
@@ -100,6 +116,12 @@ def predict(
 ):
     if input_mask is None:
         raise gr.Error("Please upload an image.")
+    
+    image = input_image.resize((max_x-min_x, max_y-min_y)).convert("RGB")
+    output_image = remove(image)
+    original_mask = np.array(image[:, :, 0]) > 0
+    mask = create_mask_with_bbox(original_mask, bbox)
+    
     padded_mask = pad_image(input_mask).resize((1024, 1024)).convert("RGB")
     conditioning, pooled = compel([prompt, negative_prompt])
     generator = torch.manual_seed(seed)
@@ -129,8 +151,16 @@ def predict(
         guidance_scale=guidance_scale,
         eta=1.0,
     )
+    images.images[0]
+
+    mask_inv = cv2.bitwise_not(mask)
+    img_bg = cv2.bitwise_and(images.images[0], images.images[0], mask=mask_inv)
+    img_fg = cv2.bitwise_and(output_image, output_image, mask=mask)
+
+    # Наложение объекта на базовое изображение
+    dst = cv2.add(img_bg, img_fg)
     print(f"Time taken: {time.time() - last_time}")
-    return (padded_mask, images.images[0]), padded_mask, anyline_image
+    return (padded_mask, dst), padded_mask, anyline_image
 
 
 css = """
